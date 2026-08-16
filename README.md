@@ -97,15 +97,7 @@ Standard RAG chatbots merely tell you **what a paper argued**  they cannot tell 
 | **Frontend** | **Streamlit** | Fast, responsive chat UI featuring word by word streaming and instant access to verified sources. |
 **Container & Cloud** | **Docker + AWS EC2** | Fully containerized environment deployed on an AWS EC2 instance. 
 
-## 📸 Screenshots
 
-<div align="center">
-
-| Chat & Retrieval Interface |
-| :---: | :---: |
-| <img src="assets/mai_screen.png" width="450" alt="Chat UI" /> |
-
-</div>
 
 ---
 
