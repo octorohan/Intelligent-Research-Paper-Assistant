@@ -57,6 +57,13 @@ docker push john/rag-paper-app:latest
 
 SSH into your EC2 instance, then:
 
+# One-time setup: create the files/folders on the HOST before first run.
+# If these don't exist, Docker will create them as directories instead of
+# files when bind-mounting, which breaks sessions.json and checkpoints.db.
+mkdir -p ~/rag-paper-app-data/embedding_cache
+touch ~/rag-paper-app-data/sessions.json
+touch ~/rag-paper-app-data/checkpoints.db
+
 ```bash
 # Pull the image
 docker pull <your-dockerhub-username>/<your-image-name>:<tag>
@@ -64,11 +71,16 @@ docker pull <your-dockerhub-username>/<your-image-name>:<tag>
 # Run the container
 docker run -d \
   -p 8501:8501 \
-  -e OPENAI_API_KEY=<your-openai-api-key> \
+  -e GOOGLE_API_KEY=<your-google-api-key> \
   -e TAVILY_API_KEY=<your-tavily-api-key> \
   -e QDRANT_URL=<your-qdrant-url> \
   -e QDRANT_API_KEY=<your-qdrant-api-key> \
-  --name rag-paper-app \
+  -e APP_PASSWORD=<your-chosen-password> \
+  -v ~/rag-paper-app-data/embedding_cache:/app/embedding_cache \
+  -v ~/rag-paper-app-data/sessions.json:/app/sessions.json \
+  -v ~/rag-paper-app-data/checkpoints.db:/app/checkpoints.db \
+  --restart unless-stopped \
+  --name irpa-app \
   <your-dockerhub-username>/<your-image-name>:<tag>
 ```
 

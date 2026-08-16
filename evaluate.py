@@ -9,6 +9,8 @@ sys.stderr.reconfigure(encoding="utf-8")
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
 
+import os
+
 from deepeval import evaluate
 from deepeval.evaluate import AsyncConfig
 from deepeval.metrics import (
@@ -18,7 +20,9 @@ from deepeval.metrics import (
     ContextualRelevancyMetric,
     FaithfulnessMetric,
 )
+from deepeval.models import GeminiModel
 from deepeval.synthesizer import Synthesizer
+
 from deepeval.synthesizer.config import ContextConstructionConfig
 from deepeval.test_case import LLMTestCase
 
@@ -34,9 +38,14 @@ MAX_CONTEXTS        = 5
 GOLDENS_PER_CONTEXT = 2
 METRIC_THRESHOLD    = 0.7
 
+eval_model = GeminiModel(
+    model="gemini-3.5-flash",
+    api_key=os.environ["GOOGLE_API_KEY"],
+)
+
 
 def generate_goldens() -> list[dict]:
-    synthesizer = Synthesizer()
+    synthesizer = Synthesizer(model=eval_model)
     goldens = synthesizer.generate_goldens_from_docs(
         document_paths=[PDF_PATH],
         include_expected_output=True,
@@ -83,11 +92,11 @@ def main() -> None:
     graph = build_graph(db_path="eval_checkpoints.db")
 
     metrics = [
-        ContextualPrecisionMetric(threshold=METRIC_THRESHOLD, model="gpt-5.4-mini"),
-        ContextualRecallMetric(threshold=METRIC_THRESHOLD, model="gpt-5.4-mini"),
-        ContextualRelevancyMetric(threshold=METRIC_THRESHOLD, model="gpt-5.4-mini"),
-        AnswerRelevancyMetric(threshold=METRIC_THRESHOLD, model="gpt-5.4-mini"),
-        FaithfulnessMetric(threshold=METRIC_THRESHOLD, model="gpt-5.4-mini"),
+        ContextualPrecisionMetric(threshold=METRIC_THRESHOLD, model=eval_model),
+        ContextualRecallMetric(threshold=METRIC_THRESHOLD, model=eval_model),
+        ContextualRelevancyMetric(threshold=METRIC_THRESHOLD, model=eval_model),
+        AnswerRelevancyMetric(threshold=METRIC_THRESHOLD, model=eval_model),
+        FaithfulnessMetric(threshold=METRIC_THRESHOLD, model=eval_model),
     ]
 
     test_cases = []

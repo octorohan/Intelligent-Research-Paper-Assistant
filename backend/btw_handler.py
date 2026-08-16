@@ -3,14 +3,14 @@ from typing import Generator
 
 from dotenv import load_dotenv
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from tavily import TavilyClient
 
-from backend.models import BtwRouteDecision
+from backend.models import BtwRouteDecision, extract_text
 
 load_dotenv()
 
-llm = ChatOpenAI(model="gpt-5-mini")
+llm = ChatGoogleGenerativeAI(model="gemini-3.5-flash")
 
 
 def handle_btw(query: str) -> Generator[str, None, None]:
@@ -42,5 +42,6 @@ def handle_btw(query: str) -> Generator[str, None, None]:
         ])
 
     for chunk in (answer_prompt | llm).stream({"query": query}):
-        if chunk.content:
-            yield chunk.content
+        text = extract_text(chunk.content)
+        if text:
+            yield text

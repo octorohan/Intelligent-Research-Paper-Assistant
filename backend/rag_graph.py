@@ -10,7 +10,7 @@ from langchain_core.documents import Document
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import InjectedToolCallId, tool
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, MessagesState, StateGraph
 from langgraph.prebuilt import InjectedState, ToolNode, tools_condition
@@ -18,12 +18,12 @@ from langgraph.types import Command
 from pydantic import BaseModel, Field
 from tavily import TavilyClient
 
-from backend.models import ClaimVerificationResult, RelevancyDecision, RouterDecision
+from backend.models import ClaimVerificationResult, RelevancyDecision, RouterDecision, extract_text
 from backend.vector_store import search as vs_search
 
 load_dotenv()
 
-llm = ChatOpenAI(model="gpt-5.4-mini")
+llm = ChatGoogleGenerativeAI(model="gemini-3.5-flash")
 
 
 # ── State ─────────────────────────────────────────────────────────────────────
@@ -139,7 +139,7 @@ def web_search(
 # ── Retrieval agent singletons ────────────────────────────────────────────────
 
 RETRIEVAL_TOOLS = [retrieve_from_vectorstore, web_search]
-retrieval_llm = llm.bind_tools(RETRIEVAL_TOOLS, parallel_tool_calls=False)
+retrieval_llm = llm.bind_tools(RETRIEVAL_TOOLS)
 base_tool_node = ToolNode(RETRIEVAL_TOOLS)
 
 RETRIEVE_SYSTEM = (
@@ -224,7 +224,7 @@ def query_rewrite_node(state: RAGState) -> dict:
         {"role": "system", "content": QUERY_REWRITE_SYSTEM},
         {"role": "user", "content": f"Original query: {original_query}\n\nWrite an improved search query."},
     ])
-    rewritten = response.content.strip()
+    rewritten = extract_text(response.content).strip()
     return {
         "messages": [HumanMessage(content=rewritten)],
         "query": rewritten,
@@ -321,7 +321,7 @@ def generate_answer_node(state: RAGState) -> dict:
             else:
                 context = "\n\n---\n\n".join(doc.page_content for doc in docs)
                 prompt = f"Answer the question using this context:\n\n{context}\n\nQuestion: {query}"
-                answer = llm.invoke([{"role": "user", "content": prompt}]).content
+                answer = extract_text(llm.invoke([{"role": "user", "content": prompt}]).content)
 
     elif route == "verify_claim":
         verdict = state.get("claim_verdict", "")
@@ -351,7 +351,7 @@ def generate_answer_node(state: RAGState) -> dict:
 
     else:  # direct_answer
         prompt = f"Answer from your knowledge.\n\nQuestion: {query}"
-        answer = llm.invoke([{"role": "user", "content": prompt}]).content
+        answer = extract_text(llm.invoke([{"role": "user", "content": prompt}]).content)
 
     return {"answer": answer, "messages": [AIMessage(content=answer)]}
 

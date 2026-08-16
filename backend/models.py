@@ -26,3 +26,16 @@ class ClaimVerificationResult(BaseModel):
     is_superseded: bool
     verdict_summary: str
     superseding_papers: list[SupersedingPaper]
+
+def extract_text(content) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                parts.append(block.get("text", ""))
+        return "".join(parts)
+    return str(content)

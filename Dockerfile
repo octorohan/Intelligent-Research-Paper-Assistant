@@ -17,7 +17,6 @@ COPY app.py .
 COPY evaluate.py .
 COPY main.py .
 COPY goldens.json .
-COPY sessions.json .
 
 EXPOSE 8501
 

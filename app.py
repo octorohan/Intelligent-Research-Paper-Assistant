@@ -1,20 +1,155 @@
 import json
+import os
 import tempfile
 import uuid
 from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
+from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 from backend.btw_handler import handle_btw
 from backend.paper_loader import load_arxiv, load_document, load_webpage
 from backend.rag_graph import build_graph
+from backend.models import extract_text
 from backend.vector_store import add_paper, list_papers
 
-st.set_page_config(page_title="Papeer", page_icon="📚", layout="centered")
+load_dotenv()
 
+st.set_page_config(page_title="IRPA", page_icon="🔬", layout="centered")
+
+
+# ── Theme / CSS ──────────────────────────────────────────────────────────────
+
+def inject_custom_css() -> None:
+    st.markdown(
+        """
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+        html, body, [class*="css"] {
+            font-family: 'Inter', sans-serif;
+        }
+
+        .stApp {
+            background: radial-gradient(circle at 20% 0%, #141a24 0%, #0b0f14 55%);
+            color: #e6edf3;
+        }
+
+        [data-testid="stSidebar"] {
+            background: #10151d;
+            border-right: 1px solid #1f2733;
+        }
+
+        [data-testid="stSidebar"] .stMarkdown h2,
+        [data-testid="stSidebar"] .stMarkdown h3 {
+            color: #8fa3b8;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-weight: 700;
+        }
+
+        .stButton > button {
+            border-radius: 10px !important;
+            border: 1px solid #263140 !important;
+            background: #161d28 !important;
+            color: #e6edf3 !important;
+            font-weight: 500 !important;
+            transition: all 0.15s ease;
+        }
+
+        .stButton > button:hover {
+            border-color: #6ee7f9 !important;
+            color: #6ee7f9 !important;
+        }
+
+        .stButton > button[kind="primary"] {
+            background: linear-gradient(135deg, #6ee7f9, #7c83fd) !important;
+            color: #0b0f14 !important;
+            border: none !important;
+            font-weight: 700 !important;
+        }
+
+        [data-testid="stChatMessage"] {
+            background: #131a24;
+            border: 1px solid #202a38;
+            border-radius: 14px;
+            padding: 0.4rem 0.8rem;
+            margin-bottom: 0.6rem;
+        }
+
+        [data-testid="stChatInput"] textarea {
+            background: #131a24 !important;
+            border-radius: 12px !important;
+            border: 1px solid #263140 !important;
+        }
+
+        .irpa-header {
+            text-align: center;
+            padding: 1.2rem 0 0.5rem 0;
+        }
+
+        .irpa-header h1 {
+            font-size: 2.4rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #6ee7f9, #7c83fd);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.1rem;
+        }
+
+        .irpa-header p.subtitle {
+            color: #8fa3b8;
+            font-size: 0.95rem;
+            margin-top: 0;
+        }
+
+        .irpa-chip-row {
+            text-align: center;
+            color: #8fa3b8;
+            font-size: 0.85rem;
+            margin-bottom: 1rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+inject_custom_css()
+
+
+# ── Password gate ──────────────────────────────────────────────────────────
+
+def check_password() -> bool:
+    if st.session_state.get("authenticated"):
+        return True
+
+    st.markdown(
+        "<div class='irpa-header'><h1>🔬 IRPA</h1>"
+        "<p class='subtitle'>Intelligent Research Paper Assistant</p></div>",
+        unsafe_allow_html=True,
+    )
+    col = st.columns([1, 1.2, 1])[1]
+    with col:
+        pwd = st.text_input("Password", type="password", key="pwd_input")
+        if st.button("Enter", use_container_width=True, type="primary"):
+            if pwd and pwd == os.environ.get("APP_PASSWORD", ""):
+                st.session_state.authenticated = True
+                st.rerun()
+            else:
+                st.error("Incorrect password.")
+    return False
+
+
+if not check_password():
+    st.stop()
+
+
+# ── Graph ────────────────────────────────────────────────────────────────────
 
 @st.cache_resource
 def get_graph():
@@ -22,7 +157,7 @@ def get_graph():
 
 
 SESSIONS_FILE = Path("sessions.json")
-_rename_llm = ChatOpenAI(model="gpt-5-mini")
+_rename_llm = ChatGoogleGenerativeAI(model="gemini-3.5-flash")
 
 
 def load_sessions() -> dict:
@@ -76,9 +211,16 @@ def generate_session_name(first_message: str) -> str:
                 {"role": "user", "content": first_message[:500]},
             ]
         )
-        return response.content.strip()
-    except Exception:
+        title = extract_text(response.content).strip().strip('"').strip("'")
+        if title:
+            return title
+    except Exception as e:
+        print(f"[IRPA] Session rename failed: {e}")
+
+    fallback = first_message.strip().replace("\n", " ")
+    if not fallback:
         return "New Session"
+    return (fallback[:40] + "…") if len(fallback) > 40 else fallback
 
 
 def maybe_rename_session(session_id: str, first_message: str) -> None:
@@ -102,6 +244,23 @@ def create_session() -> str:
     st.session_state.chats[sid] = []
     st.session_state.turns[sid] = 0
     return sid
+
+
+def delete_session(session_id: str) -> None:
+    st.session_state.sessions_meta.pop(session_id, None)
+    save_sessions(st.session_state.sessions_meta)
+    st.session_state.chats.pop(session_id, None)
+    st.session_state.turns.pop(session_id, None)
+    st.session_state.pop(f"processed_files_{session_id}", None)
+
+    if st.session_state.active_session_id == session_id:
+        remaining = st.session_state.sessions_meta
+        if remaining:
+            latest = max(remaining.values(), key=lambda s: s["created_at"])
+            switch_session(latest["id"])
+        else:
+            new_sid = create_session()
+            st.session_state.active_session_id = new_sid
 
 
 def load_session_chats(session_id: str) -> list[dict]:
@@ -158,7 +317,8 @@ active_sid = st.session_state.active_session_id
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
-    if st.button("+ New Chat", use_container_width=True):
+    st.markdown("### 🔬 IRPA")
+    if st.button("+ New Chat", use_container_width=True, type="primary"):
         new_sid = create_session()
         st.session_state.active_session_id = new_sid
         active_sid = new_sid
@@ -175,14 +335,20 @@ with st.sidebar:
         sid = session["id"]
         is_active = sid == st.session_state.active_session_id
         btn_type = "primary" if is_active else "secondary"
-        if st.button(
-            session["name"],
-            key=f"sess_{sid}",
-            use_container_width=True,
-            type=btn_type,
-        ):
-            if not is_active:
-                switch_session(sid)
+        col_select, col_delete = st.columns([5, 1])
+        with col_select:
+            if st.button(
+                session["name"],
+                key=f"sess_{sid}",
+                use_container_width=True,
+                type=btn_type,
+            ):
+                if not is_active:
+                    switch_session(sid)
+                    st.rerun()
+        with col_delete:
+            if st.button("🗑", key=f"del_{sid}", use_container_width=True, help="Delete session"):
+                delete_session(sid)
                 st.rerun()
 
     st.divider()
@@ -290,12 +456,16 @@ with st.sidebar:
         st.caption("No documents loaded yet.")
 
 # ── Page header ────────────────────────────────────────────────────────────────
-st.title("📚 Papeer — Research Paper Assistant")
 st.markdown(
-    "🔍 **Ask questions** from your uploaded papers &nbsp;·&nbsp; "
-    "✅ **Verify claims** against recent literature &nbsp;·&nbsp; "
-    "🌐 **Search the web** for the latest findings\n\n"
-    "> Upload documents in the sidebar and start chatting below."
+    "<div class='irpa-header'><h1>🔬 IRPA</h1>"
+    "<p class='subtitle'>Intelligent Research Paper Assistant</p></div>",
+    unsafe_allow_html=True,
+)
+st.markdown(
+    "<div class='irpa-chip-row'>🔍 Ask questions from your papers &nbsp;·&nbsp; "
+    "✅ Verify claims against recent literature &nbsp;·&nbsp; "
+    "🌐 Search the web for the latest findings</div>",
+    unsafe_allow_html=True,
 )
 st.divider()
 
@@ -324,9 +494,10 @@ if prompt := st.chat_input("Ask about your papers, verify a claim, or search the
             else:
                 placeholder = st.empty()
                 response_text = ""
-                for chunk in handle_btw(query):
-                    response_text += chunk
-                    placeholder.markdown(response_text + "▌")
+                with st.spinner("🔎 Thinking…"):
+                    for chunk in handle_btw(query):
+                        response_text += chunk
+                        placeholder.markdown(response_text + "▌")
                 placeholder.markdown(response_text)
             st.caption("Side channel — not saved to session history.")
 
@@ -367,18 +538,19 @@ if prompt := st.chat_input("Ask about your papers, verify a claim, or search the
             placeholder = st.empty()
             response_text = ""
 
-            for chunk, metadata in graph.stream(input_state, config, stream_mode="messages"):
-                if (
-                    metadata.get("langgraph_node") == "generate_answer"
-                    and hasattr(chunk, "content")
-                    and chunk.content
-                ):
-                    response_text += chunk.content
-                    placeholder.markdown(response_text + "▌")
+            with st.spinner("🧠 Generating response…"):
+                for chunk, metadata in graph.stream(input_state, config, stream_mode="messages"):
+                    if (
+                        metadata.get("langgraph_node") == "generate_answer"
+                        and hasattr(chunk, "content")
+                        and chunk.content
+                    ):
+                        response_text += extract_text(chunk.content)
+                        placeholder.markdown(response_text + "▌")
 
-            if not response_text:
-                final_values = graph.get_state(config).values
-                response_text = final_values.get("answer") or "No response generated."
+                if not response_text:
+                    final_values = graph.get_state(config).values
+                    response_text = final_values.get("answer") or "No response generated."
 
             placeholder.markdown(response_text)
 
@@ -399,3 +571,4 @@ if prompt := st.chat_input("Ask about your papers, verify a claim, or search the
 
         if is_first_message:
             st.rerun()
+            
